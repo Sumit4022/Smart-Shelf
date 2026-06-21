@@ -1,0 +1,465 @@
+============================================================
+   SmartShelf — UI & Database Verification Guide
+============================================================
+
+Run the app first:   python smartshelf_ui.py
+Keep MySQL open in a second window side by side.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TRIGGER 4 — reduce_quantity_on_issue
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+What it does:
+Whenever a book is issued, its quantity in the database
+goes down by 1 automatically without any manual update.
+
+------------------------------------------------------------
+BEFORE — run this in MySQL first
+------------------------------------------------------------
+
+SELECT Book_Id, Title, Quantity FROM book WHERE Book_Id = 3;
+
+Result:
++---------+-------------------------+----------+
+| Book_Id | Title                   | Quantity |
++---------+-------------------------+----------+
+|       3 | A Brief History of Time |        3 |
++---------+-------------------------+----------+
+
+------------------------------------------------------------
+UI — Issue the book
+------------------------------------------------------------
+
+Go to:   Issue Book page
+Fill in:
+         Member ID    →  3
+         Book ID      →  3
+         Librarian ID →  1
+
+Click:   Issue Book button
+
+Screen shows:
+         Book issued! Due Date: 2026-04-02
+
+------------------------------------------------------------
+AFTER — run this in MySQL
+------------------------------------------------------------
+
+SELECT Book_Id, Title, Quantity FROM book WHERE Book_Id = 3;
+
+Result:
++---------+-------------------------+----------+
+| Book_Id | Title                   | Quantity |
++---------+-------------------------+----------+
+|       3 | A Brief History of Time |        2 |
++---------+-------------------------+----------+
+
+Quantity dropped from 3 to 2. Trigger fired on INSERT.
+
+Also check the borrow record was created:
+
+SELECT Borrow_Id, Member_Id, Book_Id, Status, Due_Date
+FROM book_info ORDER BY Borrow_Id DESC LIMIT 1;
+
+Result:
++-----------+-----------+---------+--------+------------+
+| Borrow_Id | Member_Id | Book_Id | Status | Due_Date   |
++-----------+-----------+---------+--------+------------+
+|        18 |         3 |       3 | Issued | 2026-04-02 |
++-----------+-----------+---------+--------+------------+
+
+Record inserted. Trigger 4 confirmed working.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TRIGGER 3 — check_book_availability
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+What it does:
+If a book has 0 copies left, the trigger blocks the issue
+completely. Nothing gets inserted into the database.
+
+------------------------------------------------------------
+UI — Set Book 7 quantity to 0
+------------------------------------------------------------
+
+Go to:   Admin Tools page
+Section: Set Book Quantity (left side)
+Fill in:
+         Book ID → 7
+
+Click:   Set to 0 button
+
+Screen shows:
+         Book 7 is now out of stock.
+
+Stock table below updates — Linear Algebra Done Right
+shows Quantity = 0 in red.
+
+------------------------------------------------------------
+VERIFY in MySQL
+------------------------------------------------------------
+
+SELECT Book_Id, Title, Quantity FROM book WHERE Book_Id = 7;
+
+Result:
++---------+---------------------------+----------+
+| Book_Id | Title                     | Quantity |
++---------+---------------------------+----------+
+|       7 | Linear Algebra Done Right |        0 |
++---------+---------------------------+----------+
+
+------------------------------------------------------------
+UI — Try issuing the out of stock book
+------------------------------------------------------------
+
+Go to:   Issue Book page
+Fill in:
+         Member ID    →  1
+         Book ID      →  7
+         Librarian ID →  1
+
+Click:   Issue Book button
+
+Screen shows:
+         Book is out of stock.
+
+------------------------------------------------------------
+VERIFY in MySQL — no new record was inserted
+------------------------------------------------------------
+
+SELECT Borrow_Id, Member_Id, Book_Id
+FROM book_info
+WHERE Book_Id = 7
+ORDER BY Borrow_Id DESC LIMIT 1;
+
+Result:
++-----------+-----------+---------+
+| Borrow_Id | Member_Id | Book_Id |
++-----------+-----------+---------+
+|         6 |         2 |       7 |
++-----------+-----------+---------+
+
+Borrow_Id 6 is an old record. No new row was added.
+Trigger 3 blocked the INSERT completely.
+
+------------------------------------------------------------
+Restore Book 7 quantity back to 3
+------------------------------------------------------------
+
+Go to:   Admin Tools page
+Fill in:
+         Book ID  → 7
+         New Qty  → 3
+
+Click:   Update Quantity
+
+Verify in MySQL:
+
+SELECT Book_Id, Title, Quantity FROM book WHERE Book_Id = 7;
+
+Result:
++---------+---------------------------+----------+
+| Book_Id | Title                     | Quantity |
++---------+---------------------------+----------+
+|       7 | Linear Algebra Done Right |        3 |
++---------+---------------------------+----------+
+
+Restored. Trigger 3 confirmed working.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TRIGGER 1 — check_max_books
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+What it does:
+Each member has a maximum borrow limit based on their
+membership plan. If they have already reached the limit,
+the trigger blocks any further issue.
+
+Member 6 (Meera Iyer) has a limit of 1 book.
+
+------------------------------------------------------------
+BEFORE — confirm Member 6 has 0 books issued
+------------------------------------------------------------
+
+SELECT COUNT(*) AS Currently_Issued
+FROM book_info
+WHERE Member_Id = 6 AND Status = 'Issued';
+
+Result:
++------------------+
+| Currently_Issued |
++------------------+
+|                0 |
++------------------+
+
+------------------------------------------------------------
+UI — Issue first book to Member 6 (within limit)
+------------------------------------------------------------
+
+Go to:   Issue Book page
+Fill in:
+         Member ID    →  6
+         Book ID      →  2
+         Librarian ID →  1
+
+Click:   Issue Book button
+
+Screen shows:
+         Book issued! Due Date: 2026-04-02
+
+------------------------------------------------------------
+VERIFY — count should now be 1
+------------------------------------------------------------
+
+SELECT COUNT(*) AS Currently_Issued
+FROM book_info
+WHERE Member_Id = 6 AND Status = 'Issued';
+
+Result:
++------------------+
+| Currently_Issued |
++------------------+
+|                1 |
++------------------+
+
+------------------------------------------------------------
+UI — Try issuing a second book to Member 6 (over limit)
+------------------------------------------------------------
+
+Go to:   Issue Book page
+Fill in:
+         Member ID    →  6
+         Book ID      →  4
+         Librarian ID →  1
+
+Click:   Issue Book button
+
+Screen shows:
+         Borrow limit reached for this member.
+
+------------------------------------------------------------
+VERIFY — count must still be 1, not 2
+------------------------------------------------------------
+
+SELECT COUNT(*) AS Currently_Issued
+FROM book_info
+WHERE Member_Id = 6 AND Status = 'Issued';
+
+Result:
++------------------+
+| Currently_Issued |
++------------------+
+|                1 |
++------------------+
+
+Still 1. Second INSERT was blocked by Trigger 1.
+Trigger 1 confirmed working.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TRIGGER 5 — increase_quantity_on_return
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+What it does:
+When a book is returned, its quantity goes back up by 1
+automatically. Only fires when status changes from
+Issued to Returned, not on any other update.
+
+------------------------------------------------------------
+BEFORE — Book 3 quantity is currently 2
+------------------------------------------------------------
+
+SELECT Book_Id, Title, Quantity FROM book WHERE Book_Id = 3;
+
+Result:
++---------+-------------------------+----------+
+| Book_Id | Title                   | Quantity |
++---------+-------------------------+----------+
+|       3 | A Brief History of Time |        2 |
++---------+-------------------------+----------+
+
+------------------------------------------------------------
+UI — Return the book
+------------------------------------------------------------
+
+Go to:   Return Book page
+Look at the issued books table on the right side
+Find:    Member 3, A Brief History of Time
+Note:    Its Borrow ID (e.g. 18)
+
+Fill in:
+         Borrow ID → 18
+
+Click:   Return Book button
+
+Screen shows:
+         Book returned on time. No fine generated.
+
+------------------------------------------------------------
+AFTER — quantity should be back to 3
+------------------------------------------------------------
+
+SELECT Book_Id, Title, Quantity FROM book WHERE Book_Id = 3;
+
+Result:
++---------+-------------------------+----------+
+| Book_Id | Title                   | Quantity |
++---------+-------------------------+----------+
+|       3 | A Brief History of Time |        3 |
++---------+-------------------------+----------+
+
+Quantity went from 2 back to 3. Trigger fired on UPDATE.
+
+Also verify status changed to Returned:
+
+SELECT Borrow_Id, Status FROM book_info WHERE Borrow_Id = 18;
+
+Result:
++-----------+----------+
+| Borrow_Id | Status   |
++-----------+----------+
+|        18 | Returned |
++-----------+----------+
+
+Trigger 5 confirmed working.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TRIGGER 2 — generate_fine
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+What it does:
+When a book is returned after its due date, the trigger
+automatically inserts a fine record. No manual entry needed.
+Fine amount is Rs.50 flat.
+
+------------------------------------------------------------
+BEFORE — note current fine count
+------------------------------------------------------------
+
+SELECT COUNT(*) AS Total_Fines FROM fine WHERE Paid_Status = 'Unpaid';
+
+Result:
++-------------+
+| Total_Fines |
++-------------+
+|           5 |
++-------------+
+
+SELECT * FROM fine ORDER BY Fine_Id DESC LIMIT 3;
+
+Result:
++---------+--------+---------------+-------------+-----------+
+| Fine_Id | Amount | Fine_Due_Date | Paid_Status | Borrow_Id |
++---------+--------+---------------+-------------+-----------+
+|      10 |  50.00 | 2026-03-19    | Unpaid      |        17 |
+|       9 |  50.00 | 2026-03-19    | Unpaid      |         1 |
+|       8 |  50.00 | 2026-03-19    | Unpaid      |         4 |
++---------+--------+---------------+-------------+-----------+
+
+------------------------------------------------------------
+UI — Create an overdue borrow record
+------------------------------------------------------------
+
+Go to:   Admin Tools page
+Section: Create Overdue Record (right side)
+Fill in:
+         Member ID    →  4
+         Book ID      →  1
+         Librarian ID →  1
+         Days Overdue →  30
+
+Click:   Create Overdue Record button
+
+Screen shows:
+         Overdue borrow record created. Borrow ID = 20.
+         Due date was 30 day(s) ago.
+
+------------------------------------------------------------
+VERIFY the record in MySQL
+------------------------------------------------------------
+
+SELECT Borrow_Id, Member_Id, Book_Id, Due_Date, Status
+FROM book_info WHERE Borrow_Id = 20;
+
+Result:
++-----------+-----------+---------+------------+--------+
+| Borrow_Id | Member_Id | Book_Id | Due_Date   | Status |
++-----------+-----------+---------+------------+--------+
+|        20 |         4 |       1 | 2026-02-17 | Issued |
++-----------+-----------+---------+------------+--------+
+
+Due date is in the past. Status is Issued.
+
+------------------------------------------------------------
+UI — Return the overdue book
+------------------------------------------------------------
+
+Go to:   Return Book page
+The overdue row appears in RED in the issued books table
+
+Fill in:
+         Borrow ID → 20
+
+Click:   Return Book button
+
+Screen shows:
+         Returned! Overdue by 30 day(s).
+         Fine of Rs.1500 auto-generated.
+
+------------------------------------------------------------
+AFTER — verify fine was auto-inserted by trigger
+------------------------------------------------------------
+
+SELECT * FROM fine ORDER BY Fine_Id DESC LIMIT 1;
+
+Result:
++---------+--------+---------------+-------------+-----------+
+| Fine_Id | Amount | Fine_Due_Date | Paid_Status | Borrow_Id |
++---------+--------+---------------+-------------+-----------+
+|      11 |  50.00 | 2026-03-19    | Unpaid      |        20 |
++---------+--------+---------------+-------------+-----------+
+
+Fine_Id 11 was inserted automatically by Trigger 2.
+No manual entry. Borrow_Id matches the returned record.
+
+SELECT COUNT(*) AS Total_Fines FROM fine WHERE Paid_Status = 'Unpaid';
+
+Result:
++-------------+
+| Total_Fines |
++-------------+
+|           6 |
++-------------+
+
+Count went from 5 to 6. Trigger 2 confirmed working.
+
+
+============================================================
+FINAL SUMMARY
+============================================================
+
+Trigger   Event              Result
+--------  -----------------  --------------------------------
+T1        BEFORE INSERT      Blocked 2nd issue for Member 6
+                             Count stayed at 1 not 2
+
+T2        AFTER UPDATE       Fine auto-inserted on overdue
+                             Fine count went from 5 to 6
+
+T3        BEFORE INSERT      Blocked issue when qty was 0
+                             No new row in book_info
+
+T4        AFTER INSERT       Book 3 qty went from 3 to 2
+                             Borrow record created
+
+T5        AFTER UPDATE       Book 3 qty went back from 2 to 3
+                             Status changed to Returned
+
+All 5 triggers verified through UI and confirmed in MySQL.
+
+============================================================
+END
+============================================================

@@ -1,0 +1,107 @@
+Triggers
+--------------------------------------------------
+-- 1. CHECK MAX BOOK LIMIT
+DELIMITER $$
+
+CREATE TRIGGER check_max_books
+BEFORE INSERT ON book_info
+FOR EACH ROW
+BEGIN
+    DECLARE max_allowed INT;
+    DECLARE current_count INT;
+
+    SELECT Max_Book_Allowed INTO max_allowed
+    FROM membership m
+    JOIN member mb 
+        ON m.Membership_Type_Id = mb.Membership_Type_Id
+    WHERE mb.Member_Id = NEW.Member_Id;
+
+    SELECT COUNT(*) INTO current_count
+    FROM book_info
+    WHERE Member_Id = NEW.Member_Id 
+      AND Status = 'Issued';
+
+    IF current_count >= max_allowed THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Book limit exceeded!';
+    END IF;
+END$$
+
+DELIMITER ;
+
+
+-- 2. AUTO GENERATE FINE
+DELIMITER $$
+
+CREATE TRIGGER generate_fine
+AFTER UPDATE ON book_info
+FOR EACH ROW
+BEGIN
+    IF NEW.Status = 'Returned' 
+       AND OLD.Status = 'Issued'  
+       AND NEW.Due_Date < CURDATE() THEN
+
+        INSERT INTO fine (Amount, Fine_Due_Date, Paid_Status, Borrow_Id)
+        VALUES (50, CURDATE(), 'Unpaid', NEW.Borrow_Id);
+
+    END IF;
+END$$
+
+DELIMITER ;
+
+
+-- 3. PREVENT ISSUE IF BOOK NOT AVAILABLE
+DELIMITER $$
+
+CREATE TRIGGER check_book_availability
+BEFORE INSERT ON book_info
+FOR EACH ROW
+BEGIN
+    DECLARE qty INT;
+
+    SELECT Quantity INTO qty
+    FROM book
+    WHERE Book_Id = NEW.Book_Id;
+
+    IF qty <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Book not available!';
+    END IF;
+END$$
+
+DELIMITER ;
+
+
+-- 4. AUTO UPDATE BOOK QUANTITY ON ISSUE
+DELIMITER $$
+
+CREATE TRIGGER reduce_quantity_on_issue
+AFTER INSERT ON book_info
+FOR EACH ROW
+BEGIN
+    UPDATE book
+    SET Quantity = Quantity - 1
+    WHERE Book_Id = NEW.Book_Id;
+END$$
+
+DELIMITER ;
+
+
+-- 5. AUTO UPDATE BOOK QUANTITY ON RETURN
+DELIMITER $$
+
+CREATE TRIGGER increase_quantity_on_return
+AFTER UPDATE ON book_info
+FOR EACH ROW
+BEGIN
+    IF NEW.Status = 'Returned' 
+       AND OLD.Status = 'Issued' THEN
+
+        UPDATE book
+        SET Quantity = Quantity + 1
+        WHERE Book_Id = NEW.Book_Id;
+
+    END IF;
+END$$
+
+DELIMITER ;
